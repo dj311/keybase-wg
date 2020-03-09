@@ -11,10 +11,12 @@ header = \
               /____/                                    /____/
 
 """
+
 description = \
 """
 Quickly setup virtual private networks for Keybase teams with Wireguard.
 """
+
 dev_docs = \
 """
 Internal Network Structure:
@@ -27,16 +29,24 @@ interfaces on clients.
 
 In summary:
   [0-8]  0xfd
-  [8-48] sha256(team_name)[0:40]
-  [48-128] sha256(user_name, device_name)[0:80]
+  [8-48] sha256(team_name + "keybase-wg")[0:40]
+  [48-88] sha256(user_name)[0:40]
+  [88-128] sha256(device_name)[0:84]
 
 This means the internal network layout is directly determined from the current team
 membership. Adding or removing new members doesn't have any affect on existing IPs.
 
 In the future, I want to make use of this to have nice hostnames like
-"<device>.<user>.<team>.keybase-wg". With the design above, this can be done via a little
-stateless DNS server that runs on each users machine.
+"<device>.<user>.<team>.keybase.local". With the design above, this can be done via a
+little stateless DNS server that runs on each users machine.
+
+This is easy to achieve if Avahi is already setup and running. Then run:
+  $ avahi-publish-address \
+      <device_name>.<user_name>.<team_name>.local \
+      <generate_device_ip(team_name, user_name, device_name)>
+
 """
+
 __doc__ = header + description + dev_docs
 
 
@@ -44,27 +54,50 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
+import shlex
+import ipaddress
 
 
-wg_config_entry_template = """
-
-"""
+KEEP_ALIVE = 25
 
 
 def sha256(x):
-    return hashlib.sha256(x).digest()
+    return hashlib.sha256(bytes(x, encoding='utf-8')).digest()
 
 
-def generate_subnet(team_name):
+def generate_team_subnet(team_name):
     local_network_prefix = bytes.fromhex("fd")
-    team_part = sha256(team_name)[0:40]
-    return local_network_prefix + team_part + bytes([0]*80)
+    # avoid collisions with unrelated applications that have hashed this team name as a
+    # subnet by concating "keybase-wg" to input
+    team_subnet = sha256(team_name + "keybase-wg")[0:5]
+    return local_network_prefix + team_subnet
 
 
-def generate_ip(team_name, user_name, device_name):
-    team_subnet = generate_subnet(team_name)
-    device_part = sha256(user_name, device_name)[0:80]
-    return team_subnet + device_part
+def generate_user_subnet(team_name, user_name):
+    team_subnet = generate_team_subnet(team_name)
+    user_subnet = sha256(user_name)[0:5]
+    return team_subnet + user_subnet
+
+
+def generate_device_ip(team_name, user_name, device_name):
+    user_subnet = generate_user_subnet(team_name, user_name)
+    device_subnet = sha256(device_name)[0:5]
+    return user_subnet + device_subnet
+
+
+def make_ipv6_cidr(ip):
+    len_bytes = len(ip)
+
+    if len_bytes < 16:  # subnet
+        padded_subnet = ip + bytes((16-len_bytes)*[0])
+        prefix_length = len_bytes * 8
+        return str(ipaddress.IPv6Network(
+            (padded_subnet, prefix_length)
+        ))
+
+    else:  # full_address
+        return str(ipaddress.IPv6Address(ip))
 
 
 def get_team_members(team_name):
@@ -76,23 +109,50 @@ def get_team_members(team_name):
             }
         }
     }
-    command_json = json.dumps(command)
-    # response_json = run_command("keybase team api", stdin=command_json)
-    response = json.loads(response_json)
-    members = response['result']['members']
+    command = json.dumps(command)
+    response = run_command(
+        "Fetching team info",
+        ["keybase", "team", "api"],
+        stdin=command,
+    )
+    response = json.loads(response)
+
+    members = response['result']['members']['owners'] + \
+        response['result']['members']['admins'] + \
+        response['result']['members']['writers'] + \
+        response['result']['members']['readers']
+
+    members = [
+        {
+            'name': member['username'],
+            'id': member['uv']['uid'],
+        }
+        for member in members
+    ]
+
     return members
 
 
 def generate_config(team_name, user_name, device_name):
-    # Generate my config
-    my_ip = generate_ip(team_name, user_name, device_name)
+    my_ip = generate_device_ip(team_name, user_name, device_name)
 
-    # Make or find existing keypair. This is per-team.
+    config_file = (
+        "[Interface]\n",
+        "PrivateKey = {private_key}\n",
+        "ListenPort = {listen_port}\n",
+        "\n",
+    )
 
-    # Generate team configs
     team_members = get_team_members(team_name)
     for member in team_members:
-        pass  # TODO
+        subnet = generate_user_subnet(team_name, member)
+        config_file += (
+            f"[Peer]\n",
+            f"PublicKey = {public_key}\n",
+            f"AllowedIPs = {subnet}\n",
+            f"PersistentKeepalive = {KEEP_ALIVE}\n",
+            f"\n",
+        )
 
 
 def get_current_user():
@@ -106,11 +166,24 @@ def get_current_user():
     return {}
 
 
-def run_command(desc, command):
+def run_command(desc, command, stdin=None):
+    command_preview = " ".join([shlex.quote(part) for part in command])
+
     print(desc + ":")
-    print(f"$ {command}")
-    os.system(command)
+    print(f"  $ {command_preview}")
+
+    result = subprocess.run(
+        command,
+        input=stdin,
+        stdout=subprocess.PIPE,
+        check=True,
+        encoding='utf-8',
+    ).stdout
+
     print("")
+
+    return result
+
 
 
 if __name__ == "__main__":
@@ -141,6 +214,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     me = get_current_user()
+    print("team members \t", get_team_members("djwj_dev_team"))
+    print("device ip \t", make_ipv6_cidr(generate_device_ip("djwj_dev_team", "djwj", "wildebeest")))
+    print("user subnet \t", make_ipv6_cidr(generate_user_subnet("djwj_dev_team", "djwj")))
+    print("team subnet \t", make_ipv6_cidr(generate_team_subnet("djwj_dev_team")))
 
     if args.action == 'up':
         # 1. Generate public and private wireguard keys for the
