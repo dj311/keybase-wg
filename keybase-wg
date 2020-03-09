@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+
+header = \
+"""
+
+        __              __
+       / /_____  __  __/ /_  ____ _________       _      ______ _
+      / //_/ _ \/ / / / __ \/ __ `/ ___/ _ \ ___ | | /| / / __ `/
+     / ,< /  __/ /_/ / /_/ / /_/ (__  /  __/.___`| |/ |/ / /_/ /
+    /_/|_|\___/\__, /_.___/\__,_/____/\___/      |__/|__/\__, /
+              /____/                                    /____/
+
+"""
+description = \
+"""
+Quickly setup virtual private networks for Keybase teams with Wireguard.
+"""
+dev_docs = \
+"""
+Internal Network Structure:
+
+We use the local network section of the IPv6 address space (fc00::/7). The specification
+requires the next 40-bits to be a randomly generated. We don't quite do this, but it's
+close. We take the first 40-bits of the hashed team name. The rest uniquely represents
+the (user, device) pair. Splitting the team should allow for simpler routing between
+interfaces on clients.
+
+In summary:
+  [0-8]  0xfd
+  [8-48] sha256(team_name)[0:40]
+  [48-128] sha256(user_name, device_name)[0:80]
+
+This means the internal network layout is directly determined from the current team
+membership. Adding or removing new members doesn't have any affect on existing IPs.
+
+In the future, I want to make use of this to have nice hostnames like
+"<device>.<user>.<team>.keybase-wg". With the design above, this can be done via a little
+stateless DNS server that runs on each users machine.
+"""
+__doc__ = header + description + dev_docs
+
+
+import argparse
+import hashlib
+import json
+import os
+
+
+wg_config_entry_template = """
+
+"""
+
+
+def sha256(x):
+    return hashlib.sha256(x).digest()
+
+
+def generate_subnet(team_name):
+    local_network_prefix = bytes.fromhex("fd")
+    team_part = sha256(team_name)[0:40]
+    return local_network_prefix + team_part + bytes([0]*80)
+
+
+def generate_ip(team_name, user_name, device_name):
+    team_subnet = generate_subnet(team_name)
+    device_part = sha256(user_name, device_name)[0:80]
+    return team_subnet + device_part
+
+
+def get_team_members(team_name):
+    command = {
+        "method": "list-team-memberships",
+        "params": {
+            "options": {
+                "team": team_name
+            }
+        }
+    }
+    command_json = json.dumps(command)
+    # response_json = run_command("keybase team api", stdin=command_json)
+    response = json.loads(response_json)
+    members = response['result']['members']
+    return members
+
+
+def generate_config(team_name, user_name, device_name):
+    # Generate my config
+    my_ip = generate_ip(team_name, user_name, device_name)
+
+    # Make or find existing keypair. This is per-team.
+
+    # Generate team configs
+    team_members = get_team_members(team_name)
+    for member in team_members:
+        pass  # TODO
+
+
+def get_current_user():
+    # Get the current users details
+    # 1. "keybase status --json"
+    # 2. parse with json.loads()
+    # 3. user_name = status['Username']
+    #    user_id = status['UserID']
+    #    device_name = status['Device']['name']
+    #    device_id = status['Device']['deviceId']
+    return {}
+
+
+def run_command(desc, command):
+    print(desc + ":")
+    print(f"$ {command}")
+    os.system(command)
+    print("")
+
+
+if __name__ == "__main__":
+    print(header)
+
+    parser = argparse.ArgumentParser(description=description)
+    subparsers = parser.add_subparsers(dest='action')
+
+    up_parser = subparsers.add_parser('up', help='connect to a network')
+    up_parser.add_argument('--team', help='name of team to connect with', required=True)
+    up_parser.add_argument('--interface', help='network interface to use', required=True)
+
+    refresh_parser = subparsers.add_parser('refresh', help='check team state and regenerate config (if needed)')
+    refresh_operand = refresh_parser.add_mutually_exclusive_group(required=True)
+    refresh_operand.add_argument('--team', help='identify network by team name')
+    refresh_operand.add_argument('--interface', help='identify network by interface name')
+
+    status_parser = subparsers.add_parser('status', help='check network status')
+    status_operand = status_parser.add_mutually_exclusive_group(required=True)
+    status_operand.add_argument('--team', help='identify network by team name')
+    status_operand.add_argument('--interface', help='identify network by interface name')
+
+    down_parser = subparsers.add_parser('down', help='disconnect from a network')
+    down_operand = down_parser.add_mutually_exclusive_group(required=True)
+    down_operand.add_argument('--team', help='identify network by team name')
+    down_operand.add_argument('--interface', help='identify network by interface name')
+
+    args = parser.parse_args()
+
+    me = get_current_user()
+
+    if args.action == 'up':
+        # 1. Generate public and private wireguard keys for the
+        #    given (device_id, user_id, team_id) combination
+        # 2. Get this clients IP address for the network.
+        # 3. Generate public and private wireguard keys for
+        #    given (device_id, user_id, team_id) combination
+        pass
+
+    elif args.action == 'refresh':
+        pass
+
+    elif args.action == 'status':
+        pass
+
+    elif args.action == 'down':
+        pass
