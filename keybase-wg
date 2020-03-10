@@ -133,6 +133,20 @@ def get_team_members(team_name):
     return members
 
 
+def get_device_info():
+    response = run_command(
+        "Getting your info",
+        ["keybase", "status", "--json"],
+    )
+    response = json.loads(response)
+    return {
+        'user': response['Username'],
+        'user_id': response['UserID'],
+        'device': response['Device']['name'],
+        'device_id': response['Device']['deviceID'],
+    }
+
+
 def generate_config(team_name, user_name, device_name):
     my_ip = generate_device_ip(team_name, user_name, device_name)
 
@@ -155,21 +169,10 @@ def generate_config(team_name, user_name, device_name):
         )
 
 
-def get_current_user():
-    # Get the current users details
-    # 1. "keybase status --json"
-    # 2. parse with json.loads()
-    # 3. user_name = status['Username']
-    #    user_id = status['UserID']
-    #    device_name = status['Device']['name']
-    #    device_id = status['Device']['deviceId']
-    return {}
-
-
 def run_command(desc, command, stdin=None):
     command_preview = " ".join([shlex.quote(part) for part in command])
 
-    print(desc + ":")
+    print(f"\n{desc}:")
     print(f"  $ {command_preview}")
 
     result = subprocess.run(
@@ -213,7 +216,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    me = get_current_user()
+    me = get_device_info()
+    print("me \t", me)
     print("team members \t", get_team_members("djwj_dev_team"))
     print("device ip \t", make_ipv6_cidr(generate_device_ip("djwj_dev_team", "djwj", "wildebeest")))
     print("user subnet \t", make_ipv6_cidr(generate_user_subnet("djwj_dev_team", "djwj")))
