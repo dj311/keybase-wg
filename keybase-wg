@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
-header = \
-"""
+header = """
 
         __              __
        / /_____  __  __/ /_  ____ _________       _      ______ _
@@ -12,13 +11,11 @@ header = \
 
 """
 
-description = \
-"""
+description = """
 Quickly setup virtual private networks for Keybase teams with Wireguard.
 """
 
-dev_docs = \
-"""
+dev_docs = """
 Internal Network Structure:
 
 We use the local network section of the IPv6 address space (fc00::/7). The specification
@@ -50,6 +47,7 @@ This is easy to achieve if Avahi is already setup and running. Then run:
 __doc__ = header + description + dev_docs
 
 
+import asyncio
 import argparse
 import hashlib
 import json
@@ -58,13 +56,15 @@ import subprocess
 import shlex
 import ipaddress
 import requests
+import pykeybasebot
 
 
 KEEP_ALIVE = 25
+LISTEN_PORT = "51820"
 
 
 def sha256(x):
-    return hashlib.sha256(bytes(x, encoding='utf-8')).digest()
+    return hashlib.sha256(bytes(x, encoding="utf-8")).digest()
 
 
 def generate_team_subnet(team_name):
@@ -91,11 +91,9 @@ def make_ipv6_cidr(ip):
     len_bytes = len(ip)
 
     if len_bytes < 16:  # subnet
-        padded_subnet = ip + bytes((16-len_bytes)*[0])
+        padded_subnet = ip + bytes((16 - len_bytes) * [0])
         prefix_length = len_bytes * 8
-        return str(ipaddress.IPv6Network(
-            (padded_subnet, prefix_length)
-        ))
+        return str(ipaddress.IPv6Network((padded_subnet, prefix_length)))
 
     else:  # full_address
         return str(ipaddress.IPv6Address(ip))
@@ -104,70 +102,59 @@ def make_ipv6_cidr(ip):
 def get_team_members(team_name):
     command = {
         "method": "list-team-memberships",
-        "params": {
-            "options": {
-                "team": team_name
-            }
-        }
+        "params": {"options": {"team": team_name}},
     }
     command = json.dumps(command)
     response = run_command(
-        "Fetching team info",
-        ["keybase", "team", "api"],
-        stdin=command,
+        "Fetching team info", ["keybase", "team", "api"], stdin=command,
     )
     response = json.loads(response)
 
-    members = response['result']['members']['owners'] + \
-        response['result']['members']['admins'] + \
-        response['result']['members']['writers'] + \
-        response['result']['members']['readers']
+    members = (
+        response["result"]["members"]["owners"]
+        + response["result"]["members"]["admins"]
+        + response["result"]["members"]["writers"]
+        + response["result"]["members"]["readers"]
+    )
 
     members = [
-        {
-            'name': member['username'],
-            'id': member['uv']['uid'],
-        }
-        for member in members
+        {"name": member["username"], "id": member["uv"]["uid"],} for member in members
     ]
 
     return members
 
 
 def get_device_info():
-    response = run_command(
-        "Getting your info",
-        ["keybase", "status", "--json"],
-    )
+    response = run_command("Getting your info", ["keybase", "status", "--json"],)
     response = json.loads(response)
     return {
-        'user': response['Username'],
-        'user_id': response['UserID'],
-        'device': response['Device']['name'],
-        'device_id': response['Device']['deviceID'],
+        "user": response["Username"],
+        "user_id": response["UserID"],
+        "device": response["Device"]["name"],
+        "device_id": response["Device"]["deviceID"],
     }
 
 
-def generate_config(team_name, user_name, device_name):
-    my_ip = generate_device_ip(team_name, user_name, device_name)
-
-    config_file = (
-        "[Interface]\n",
-        "PrivateKey = {private_key}\n",
-        "ListenPort = {listen_port}\n",
-        "\n",
+def generate_config(private_key, internal_ip, peers):
+    config = (
+        f"[Interface]\n"
+        f"PrivateKey = {private_key}\n"
+        f"Address = {internal_ip}\n"
+        f"ListenPort = {LISTEN_PORT}\n"
+        f"\n"
     )
 
-    team_members = get_team_members(team_name)
-    for member in team_members:
-        subnet = generate_user_subnet(team_name, member)
-        config_file += (
-            f"[Peer]\n",
-            f"PublicKey = {public_key}\n",
-            f"AllowedIPs = {subnet}\n",
-            f"PersistentKeepalive = {KEEP_ALIVE}\n",
-            f"\n",
+    for peer in peers:
+        config += (
+            f"[Peer]\n"
+            f"PublicKey = {peer['public_key']}\n"
+            f"AllowedIPs = {peer['internal_ip']}\n"
+            f"Endpoint = {peer['external_ip']}:{LISTEN_PORT}\n"
+            f"PersistentKeepalive = {KEEP_ALIVE}\n"
+            f"\n"
         )
+
+    return config
 
 
 def run_command(desc, command, stdin=None):
@@ -177,11 +164,7 @@ def run_command(desc, command, stdin=None):
     print(f"  $ {command_preview}")
 
     result = subprocess.run(
-        command,
-        input=stdin,
-        stdout=subprocess.PIPE,
-        check=True,
-        encoding='utf-8',
+        command, input=stdin, stdout=subprocess.PIPE, check=True, encoding="utf-8",
     ).stdout
 
     print("")
@@ -189,54 +172,126 @@ def run_command(desc, command, stdin=None):
     return result
 
 
-
 if __name__ == "__main__":
     print(header)
 
     parser = argparse.ArgumentParser(description=description)
-    subparsers = parser.add_subparsers(dest='action')
+    subparsers = parser.add_subparsers(dest="action")
 
-    up_parser = subparsers.add_parser('up', help='connect to a network')
-    up_parser.add_argument('--team', help='name of team to connect with', required=True)
-    up_parser.add_argument('--interface', help='network interface to use', required=True)
+    up_parser = subparsers.add_parser("up", help="connect to a network")
+    up_parser.add_argument("--team", help="name of team to connect with", required=True)
+    up_parser.add_argument(
+        "--interface", help="network interface to use", required=True
+    )
 
-    refresh_parser = subparsers.add_parser('refresh', help='check team state and regenerate config (if needed)')
+    refresh_parser = subparsers.add_parser(
+        "refresh", help="check team state and regenerate config (if needed)"
+    )
     refresh_operand = refresh_parser.add_mutually_exclusive_group(required=True)
-    refresh_operand.add_argument('--team', help='identify network by team name')
-    refresh_operand.add_argument('--interface', help='identify network by interface name')
+    refresh_operand.add_argument("--team", help="identify network by team name")
+    refresh_operand.add_argument(
+        "--interface", help="identify network by interface name"
+    )
 
-    status_parser = subparsers.add_parser('status', help='check network status')
+    status_parser = subparsers.add_parser("status", help="check network status")
     status_operand = status_parser.add_mutually_exclusive_group(required=True)
-    status_operand.add_argument('--team', help='identify network by team name')
-    status_operand.add_argument('--interface', help='identify network by interface name')
+    status_operand.add_argument("--team", help="identify network by team name")
+    status_operand.add_argument(
+        "--interface", help="identify network by interface name"
+    )
 
-    down_parser = subparsers.add_parser('down', help='disconnect from a network')
+    down_parser = subparsers.add_parser("down", help="disconnect from a network")
     down_operand = down_parser.add_mutually_exclusive_group(required=True)
-    down_operand.add_argument('--team', help='identify network by team name')
-    down_operand.add_argument('--interface', help='identify network by interface name')
+    down_operand.add_argument("--team", help="identify network by team name")
+    down_operand.add_argument("--interface", help="identify network by interface name")
 
     args = parser.parse_args()
 
     me = get_device_info()
     print("me \t", me)
     print("team members \t", get_team_members("djwj_dev_team"))
-    print("device ip \t", make_ipv6_cidr(generate_device_ip("djwj_dev_team", "djwj", "wildebeest")))
-    print("user subnet \t", make_ipv6_cidr(generate_user_subnet("djwj_dev_team", "djwj")))
+    print(
+        "device ip \t",
+        make_ipv6_cidr(generate_device_ip("djwj_dev_team", "djwj", "wildebeest")),
+    )
+    print(
+        "user subnet \t", make_ipv6_cidr(generate_user_subnet("djwj_dev_team", "djwj"))
+    )
     print("team subnet \t", make_ipv6_cidr(generate_team_subnet("djwj_dev_team")))
 
-    if args.action == 'up':
-        # 1. Generate public and private wireguard keys for the
-        #    given (device_id, user_id, team_id) combination
-        # 2. Get this clients IP address for the network.
-        # 3. Generate public and private wireguard keys for
-        #    given (device_id, user_id, team_id) combination
+    # 1. Generate public and private wireguard keys for the
+    #    given (device_id, user_id, team_id) combination
+    # 2. Get this clients IP address for the network.
+    # 3. Generate public and private wireguard keys for
+    #    given (device_id, user_id, team_id) combination
+
+    # Generate my new keys
+    private_key = run_command("Generating private key", ["wg", "genkey"]).strip()
+    print("private key \t", private_key)
+
+    public_key = run_command(
+        "Deriving public key", ["wg", "pubkey"], stdin=private_key
+    ).strip()
+    print("public key \t", public_key)
+
+    # Figure out my public ip
+    # TODO: I feel like there is a more "correct way" of doing
+    # this.
+    external_ip = requests.get("https://checkip.amazonaws.com").text.strip()
+    print("external ip \t", external_ip)
+
+    # Generate my internal ip
+    internal_ip = make_ipv6_cidr(
+        generate_device_ip(args.team, me["user"], me["device"])
+    )
+    print("internal ip \t", internal_ip)
+
+    # Publish my details for others
+    def event_handler(*args, **kwargs):
         pass
 
-    elif args.action == 'refresh':
-        pass
+    bot = pykeybasebot.Bot(handler=event_handler)
+    asyncio.run(
+        bot.kvstore.put(
+            "keybase-wg",
+            me["device_id"] + "-config",
+            json.dumps(
+                {
+                    "device_id": me["device_id"],
+                    "public_key": public_key,
+                    "internal_ip": internal_ip,
+                    "external_ip": external_ip,
+                }
+            ),
+            team=args.team,
+        )
+    )
 
-    elif args.action == 'status':
-        pass
+    # Pull in latest details from team members
+    store_entry_keys = asyncio.run(
+        bot.kvstore.list_entrykeys("keybase-wg", team=args.team)
+    )
+    config_entry_keys = {
+        entry_key.entry_key
+        for entry_key in store_entry_keys.entry_keys
+        if entry_key.entry_key.endswith("-config")
+    }
+    peers = [
+        json.loads(
+            asyncio.run(bot.kvstore.get("keybase-wg", entry_key, args.team)).entry_value
+        )
+        for entry_key in config_entry_keys
+    ]
 
-    elif args.action == 'down':
-        pass
+    peers = [peer for peer in peers if peer["device_id"] != me["device_id"]]
+
+    # Want to only ensure valid devices are allowed. The following
+    # doesn't work because it's per-user.
+    # allowed_team_members = [member["id"] for member in get_team_members(args.team)]
+    # peers = [peer for peer in peers if peer in allowed_team_members]
+
+    # Generate config
+    config_str = generate_config(private_key, internal_ip, peers)
+    print(config_str)
+
+    # wg-quick up
