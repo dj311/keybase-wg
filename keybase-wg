@@ -288,11 +288,11 @@ if __name__ == "__main__":
     )
 
     # Use avahi to setup nice hostnames
-    # internal_name = ".".join([me["device"], me["user"], args.team, "local"])
-    # run_command(
-    #     "Give our device a name on the network:",
-    #     ["avahi-publish-address", internal_name, internal_ip],
-    # )
+    internal_name = ".".join([me["device"], me["user"], args.team, "local"])
+    run_command(
+        "Give our device a name on the team network:",
+        ["avahi-publish-address", internal_name, internal_ip],
+    )
 
     try:
         while True:
@@ -323,7 +323,7 @@ if __name__ == "__main__":
 
             change = any(
                 [
-                    peers[entry_key] != new_peers[entry_key]
+                    peers.get(entry_key) != new_peers.get(entry_key)
                     for entry_key in new_peers.keys()
                 ]
             )
@@ -358,7 +358,7 @@ if __name__ == "__main__":
             "Deleting wireguard config:", ["rm", interface_conf_path],
         )
 
-        print("Deregistering as network peer:\n")
+        print("Deregistering as network peer.\n")
         asyncio.run(
             bot.kvstore.delete(
                 "keybase-wg", me["device_id"] + "-config", team=args.team,
