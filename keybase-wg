@@ -316,9 +316,9 @@ if __name__ == "__main__":
     #     ["avahi-publish-address", internal_name, internal_ip],
     # )
 
-    print("\n► Listening for changes in network config...")
     try:
         while True:
+            print("\n► Listening for changes in network config...")
             time.sleep(10)
 
             new_peers = fetch_network_state(bot)
