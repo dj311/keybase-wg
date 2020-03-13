@@ -16,6 +16,23 @@ Quickly setup virtual private networks for Keybase teams with Wireguard.
 """
 
 dev_docs = """
+TODO:
+  - Finish script by saving conf file and running "wg-quick".
+  - Sanitize inputs by parsing them as the things they should
+    be. Double check places where we stick stuff in the command line.
+  - Double check that the team name given is valid.
+  - Where possible, double check that say peer with device_id=x is
+    actually in our team. Which leads to....
+  - Figure out a way to invalid devices which have been revoked.
+    - I think the way to do this is to check which key was used to
+      sign each value in the keystore. Was it the current team key? Or
+      was it the old one? If it was an old one, reject it.
+  - Test with multiple devices.
+  - Use UDP ports properly.
+  - Sort out hole-punching.
+  - Use second public IP address API and compare results.
+
+
 Internal Network Structure:
 
 We use the local network section of the IPv6 address space (fc00::/7). The specification
@@ -176,54 +193,19 @@ if __name__ == "__main__":
     print(header)
 
     parser = argparse.ArgumentParser(description=description)
-    subparsers = parser.add_subparsers(dest="action")
-
-    up_parser = subparsers.add_parser("up", help="connect to a network")
-    up_parser.add_argument("--team", help="name of team to connect with", required=True)
-    up_parser.add_argument(
-        "--interface", help="network interface to use", required=True
-    )
-
-    refresh_parser = subparsers.add_parser(
-        "refresh", help="check team state and regenerate config (if needed)"
-    )
-    refresh_operand = refresh_parser.add_mutually_exclusive_group(required=True)
-    refresh_operand.add_argument("--team", help="identify network by team name")
-    refresh_operand.add_argument(
-        "--interface", help="identify network by interface name"
-    )
-
-    status_parser = subparsers.add_parser("status", help="check network status")
-    status_operand = status_parser.add_mutually_exclusive_group(required=True)
-    status_operand.add_argument("--team", help="identify network by team name")
-    status_operand.add_argument(
-        "--interface", help="identify network by interface name"
-    )
-
-    down_parser = subparsers.add_parser("down", help="disconnect from a network")
-    down_operand = down_parser.add_mutually_exclusive_group(required=True)
-    down_operand.add_argument("--team", help="identify network by team name")
-    down_operand.add_argument("--interface", help="identify network by interface name")
+    parser.add_argument("--team", help="name of team to connect with", required=True)
+    parser.add_argument("--interface", help="network interface to use", required=True)
 
     args = parser.parse_args()
 
-    me = get_device_info()
-    print("me \t", me)
-    print("team members \t", get_team_members("djwj_dev_team"))
-    print(
-        "device ip \t",
-        make_ipv6_cidr(generate_device_ip("djwj_dev_team", "djwj", "wildebeest")),
-    )
-    print(
-        "user subnet \t", make_ipv6_cidr(generate_user_subnet("djwj_dev_team", "djwj"))
-    )
-    print("team subnet \t", make_ipv6_cidr(generate_team_subnet("djwj_dev_team")))
+    # The "bot" is our interface to keybase
+    def event_handler(*args, **kwargs):
+        pass
 
-    # 1. Generate public and private wireguard keys for the
-    #    given (device_id, user_id, team_id) combination
-    # 2. Get this clients IP address for the network.
-    # 3. Generate public and private wireguard keys for
-    #    given (device_id, user_id, team_id) combination
+    bot = pykeybasebot.Bot(handler=event_handler)
+
+    # Who am I?
+    me = get_device_info()
 
     # Generate my new keys
     private_key = run_command("Generating private key", ["wg", "genkey"]).strip()
@@ -247,10 +229,6 @@ if __name__ == "__main__":
     print("internal ip \t", internal_ip)
 
     # Publish my details for others
-    def event_handler(*args, **kwargs):
-        pass
-
-    bot = pykeybasebot.Bot(handler=event_handler)
     asyncio.run(
         bot.kvstore.put(
             "keybase-wg",
@@ -295,3 +273,10 @@ if __name__ == "__main__":
     print(config_str)
 
     # wg-quick up
+
+    # Use avahi to setup nice hostnames
+    internal_name = ".".join([me["device"], me["user"], args.team, "local"])
+    run_command(
+        "Give our device a name on the network:",
+        ["avahi-publish-address", internal_name, internal_ip],
+    )
