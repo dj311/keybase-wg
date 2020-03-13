@@ -316,7 +316,7 @@ if __name__ == "__main__":
     #     ["avahi-publish-address", internal_name, internal_ip],
     # )
 
-    print("► Listening for changes in network config...")
+    print("\n► Listening for changes in network config...")
     try:
         while True:
             time.sleep(10)
