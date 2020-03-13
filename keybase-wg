@@ -27,6 +27,19 @@ TODO:
     - I think the way to do this is to check which key was used to
       sign each value in the keystore. Was it the current team key? Or
       was it the old one? If it was an old one, reject it.
+    - This might be an alternative method:
+      $ echo '{"method": "getdeviceinfo", "params": {"options": {"username": "?"}}}' \
+        | keybase chat api -p
+      {"result": {
+          "devices": [
+              {
+                  "id": "<device_id>",
+                  "description": "<device_name>",
+                  "type": "<type>",
+                  "ctime": <creation_time>
+              }
+          ]
+    }}
   - Test with multiple devices.
   - Use UDP ports properly.
   - Sort out hole-punching.
@@ -290,10 +303,11 @@ if __name__ == "__main__":
     # Use avahi to setup nice hostnames
     internal_name = ".".join([me["device"], me["user"], args.team, "local"])
     run_command(
-        "Give our device a name on the team network:",
+        "Giving our device a name on the team network:",
         ["avahi-publish-address", internal_name, internal_ip],
     )
 
+    print("Listening for changes in network config...")
     try:
         while True:
             time.sleep(10)
