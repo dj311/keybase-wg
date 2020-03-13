@@ -188,6 +188,43 @@ def generate_config(private_key, internal_ip, peers):
     return config
 
 
+def generate_keypair():
+    private_key = run_command("Generating private key", ["wg", "genkey"]).strip()
+
+    public_key = run_command(
+        "Deriving public key", ["wg", "pubkey"], stdin=private_key
+    ).strip()
+
+    return private_key, public_key
+
+
+def fetch_network_state(bot):
+    keys = asyncio.run(bot.kvstore.list_entrykeys("keybase-wg", team=args.team))
+
+    keys = keys.entry_keys
+    keys = [key.entry_key for key in keys]
+    keys = set(keys)
+
+    config_keys = {key for key in keys if key.endswith("-config")}
+
+    peers = {
+        key: json.loads(
+            asyncio.run(bot.kvstore.get("keybase-wg", key, args.team)).entry_value
+        )
+        for key in config_keys
+    }
+
+    return peers
+
+
+def generate_interface_name(team):
+    return f"kb-{team}"[0:15]
+
+
+def generate_hostname(team, user, device):
+    return f"{device}.{user}.{team}.local"
+
+
 def run_command(desc, command, stdin=None):
     command_preview = " ".join([shlex.quote(part) for part in command])
 
@@ -197,8 +234,6 @@ def run_command(desc, command, stdin=None):
     result = subprocess.run(
         command, input=stdin, stdout=subprocess.PIPE, check=True, encoding="utf-8",
     ).stdout
-
-    print("")
 
     return result
 
@@ -217,21 +252,16 @@ if __name__ == "__main__":
 
     bot = pykeybasebot.Bot(handler=event_handler)
 
-    # Who am I?
+    print("\n► Fetching/generating device information.")
     me = get_device_info()
 
-    # Generate my new keys
-    private_key = run_command("Generating private key", ["wg", "genkey"]).strip()
+    private_key, public_key = generate_keypair()
+    print("")
     print("private key \t", private_key)
-
-    public_key = run_command(
-        "Deriving public key", ["wg", "pubkey"], stdin=private_key
-    ).strip()
     print("public key \t", public_key)
 
     # Figure out my public ip
-    # TODO: I feel like there is a more "correct way" of doing
-    # this.
+    # TODO: I feel like there is a more "correct way" of doing this.
     external_ip = requests.get("https://checkip.amazonaws.com").text.strip()
     print("external ip \t", external_ip)
 
@@ -242,6 +272,7 @@ if __name__ == "__main__":
     print("internal ip \t", internal_ip)
 
     # Publish my details for others
+    print("\n► Publishing my device information to team.")
     asyncio.run(
         bot.kvstore.put(
             "keybase-wg",
@@ -258,124 +289,83 @@ if __name__ == "__main__":
         )
     )
 
-    # Pull in latest details from team members
-    store_entry_keys = asyncio.run(
-        bot.kvstore.list_entrykeys("keybase-wg", team=args.team)
-    )
-    config_entry_keys = {
-        entry_key.entry_key
-        for entry_key in store_entry_keys.entry_keys
-        if entry_key.entry_key.endswith("-config")
-    }
+    print("\n► Fetching team information.")
+    peers = fetch_network_state(bot)
 
+    # Remove ourselves from the peer list
     peers = {
-        entry_key: json.loads(
-            asyncio.run(bot.kvstore.get("keybase-wg", entry_key, args.team)).entry_value
-        )
-        for entry_key in config_entry_keys
-    }
-    peers = {
-        entry_key: peer
-        for entry_key, peer in peers.items()
-        if peer["device_id"] != me["device_id"]
+        key: peer for key, peer in peers.items() if peer["device_id"] != me["device_id"]
     }
 
-    # Want to only ensure valid devices are allowed. The following
-    # doesn't work because it's per-user.
-    # allowed_team_members = [member["id"] for member in get_team_members(args.team)]
-    # peers = [peer for peer in peers if peer in allowed_team_members]
-
-    # Generate config
+    print("\n► Configuring device.")
+    interface = generate_interface_name(args.team)
     config_str = generate_config(private_key, internal_ip, peers)
-    print("\nConfig:\n")
-    print(config_str)
 
-    interface = "./" + f"kbwg{args.team}"[0:15]
-    interface_conf_path = interface + ".conf"
+    interface_conf_path = "./" + interface + ".conf"
     with open(interface_conf_path, "w") as f:
         f.writelines(config_str)
 
-    # wg-quick up
     run_command(
-        "Put the interface up:", ["wg-quick", "up", interface_conf_path],
+        "Join the network", ["wg-quick", "up", interface_conf_path],
     )
 
     # Use avahi to setup nice hostnames
-    internal_name = ".".join([me["device"], me["user"], args.team, "local"])
-    run_command(
-        "Giving our device a name on the team network:",
-        ["avahi-publish-address", internal_name, internal_ip],
-    )
+    # internal_name = generate_hostname(args.team, me["user"], me["device"])
+    # run_command(
+    #     "Giving our device a name on the team network",
+    #     ["avahi-publish-address", internal_name, internal_ip],
+    # )
 
-    print("Listening for changes in network config...")
+    print("► Listening for changes in network config...")
     try:
         while True:
             time.sleep(10)
 
-            # Pull in latest details from team members
-            store_entry_keys = asyncio.run(
-                bot.kvstore.list_entrykeys("keybase-wg", team=args.team)
-            )
-            config_entry_keys = {
-                entry_key.entry_key
-                for entry_key in store_entry_keys.entry_keys
-                if entry_key.entry_key.endswith("-config")
-            }
+            new_peers = fetch_network_state(bot)
             new_peers = {
-                entry_key: json.loads(
-                    asyncio.run(
-                        bot.kvstore.get("keybase-wg", entry_key, args.team)
-                    ).entry_value
-                )
-                for entry_key in config_entry_keys
-            }
-            new_peers = {
-                entry_key: peer
-                for entry_key, peer in new_peers.items()
+                key: peer
+                for key, peer in new_peers.items()
                 if peer["device_id"] != me["device_id"]
             }
 
-            change = any(
-                [
-                    peers.get(entry_key) != new_peers.get(entry_key)
-                    for entry_key in new_peers.keys()
-                ]
-            )
-            new_peer = any([entry_key not in peers for entry_key in new_peers])
-            peer_removed = any([entry_key not in new_peers for entry_key in peers])
+            peers_changed = [
+                peers.get(key) != new_peers.get(key) for key in new_peers.keys()
+            ]
+            peer_added = any([key not in peers for key in new_peers])
+            peer_removed = any([key not in new_peers for key in peers])
 
-            if new_peer or peer_removed or change:
+            if peer_added or peer_removed or any(peers_changed):
+                print("Change detected: syncing configuration with team.")
                 peers = new_peers
 
-                # wg-quick down
                 run_command(
-                    "Taking interface down:", ["wg-quick", "down", interface_conf_path],
+                    "Taking interface down", ["wg-quick", "down", interface_conf_path],
                 )
 
-                # Generate config
                 config_str = generate_config(private_key, internal_ip, peers)
-                print("\nConfig:\n")
-                print(config_str)
                 with open(interface_conf_path, "w") as f:
                     f.writelines(config_str)
 
-                # wg-quick up
                 run_command(
-                    "Putting interface up:", ["wg-quick", "up", interface_conf_path],
+                    "Putting interface up", ["wg-quick", "up", interface_conf_path],
                 )
 
     except (KeyboardInterrupt, SystemExit):
+        print("► Disconnecting from network.")
+
         run_command(
-            "Taking interface down:", ["wg-quick", "down", interface_conf_path],
+            "Taking interface down", ["wg-quick", "down", interface_conf_path],
         )
         run_command(
-            "Deleting wireguard config:", ["rm", interface_conf_path],
+            "Deleting wireguard config", ["rm", interface_conf_path],
         )
 
-        print("Deregistering as network peer.\n")
+        print("Deregistering from network.\n")
         asyncio.run(
             bot.kvstore.delete(
                 "keybase-wg", me["device_id"] + "-config", team=args.team,
             )
         )
+
+        print("Bye!")
         quit()
