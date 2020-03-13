@@ -74,6 +74,7 @@ import shlex
 import ipaddress
 import requests
 import pykeybasebot
+import time
 
 
 KEEP_ALIVE = 25
@@ -161,7 +162,7 @@ def generate_config(private_key, internal_ip, peers):
         f"\n"
     )
 
-    for peer in peers:
+    for peer_key, peer in peers.items():
         config += (
             f"[Peer]\n"
             f"PublicKey = {peer['public_key']}\n"
@@ -194,7 +195,6 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--team", help="name of team to connect with", required=True)
-    parser.add_argument("--interface", help="network interface to use", required=True)
 
     args = parser.parse_args()
 
@@ -254,14 +254,18 @@ if __name__ == "__main__":
         for entry_key in store_entry_keys.entry_keys
         if entry_key.entry_key.endswith("-config")
     }
-    peers = [
-        json.loads(
+
+    peers = {
+        entry_key: json.loads(
             asyncio.run(bot.kvstore.get("keybase-wg", entry_key, args.team)).entry_value
         )
         for entry_key in config_entry_keys
-    ]
-
-    peers = [peer for peer in peers if peer["device_id"] != me["device_id"]]
+    }
+    peers = {
+        entry_key: peer
+        for entry_key, peer in peers.items()
+        if peer["device_id"] != me["device_id"]
+    }
 
     # Want to only ensure valid devices are allowed. The following
     # doesn't work because it's per-user.
@@ -270,13 +274,79 @@ if __name__ == "__main__":
 
     # Generate config
     config_str = generate_config(private_key, internal_ip, peers)
+    print("\nConfig:\n")
     print(config_str)
 
+    interface = f"kbwg-{args.team}"[0:15]
+    interface_conf_path = interface + ".conf"
+    with open(interface_conf_path, "w") as f:
+        f.writelines(config_str)
+
     # wg-quick up
+    run_command(
+        "Put the interface up:", ["wg-quick", "up", interface_conf_path],
+    )
+
+    while True:
+        time.sleep(10)
+
+        # Pull in latest details from team members
+        store_entry_keys = asyncio.run(
+            bot.kvstore.list_entrykeys("keybase-wg", team=args.team)
+        )
+        config_entry_keys = {
+            entry_key.entry_key
+            for entry_key in store_entry_keys.entry_keys
+            if entry_key.entry_key.endswith("-config")
+        }
+        new_peers = {
+            entry_key: json.loads(
+                asyncio.run(
+                    bot.kvstore.get("keybase-wg", entry_key, args.team)
+                ).entry_value
+            )
+            for entry_key in config_entry_keys
+        }
+        new_peers = {
+            entry_key: peer
+            for entry_key, peer in new_peers.items()
+            if peer["device_id"] != me["device_id"]
+        }
+
+        change = any(
+            [peers[entry_key] != new_peers[entry_key] for entry_key in new_peers.keys()]
+        )
+        new_peer = any([entry_key not in peers for entry_key in new_peers])
+        peer_removed = any([entry_key not in new_peers for entry_key in peers])
+
+        if new_peer or peer_removed or change:
+            peers = new_peers
+
+            # wg-quick down
+            run_command(
+                "Taking interface down:", ["wg-quick", "down", interface_conf_path],
+            )
+
+            # Generate config
+            config_str = generate_config(private_key, internal_ip, peers)
+            print("\nConfig:\n")
+            print(config_str)
+            with open(interface_conf_path, "w") as f:
+                f.writelines(config_str)
+
+            # wg-quick up
+            run_command(
+                "Putting interface up:", ["wg-quick", "up", interface_conf_path],
+            )
+
+    # wg-quick up
+    run_command(
+        "Put the interface up:", ["wg-quick", "up", interface_conf_path],
+    )
 
     # Use avahi to setup nice hostnames
-    internal_name = ".".join([me["device"], me["user"], args.team, "local"])
-    run_command(
-        "Give our device a name on the network:",
-        ["avahi-publish-address", internal_name, internal_ip],
-    )
+    # internal_name = ".".join([me["device"], me["user"], args.team, "local"])
+    # run_command(
+    #     "Give our device a name on the network:",
+    #     ["avahi-publish-address", internal_name, internal_ip],
+    # )
