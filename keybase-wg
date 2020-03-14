@@ -345,11 +345,21 @@ if __name__ == "__main__":
     # Setup nice hostnames with avahi/mdns.
     internal_name = generate_hostname(args.team, me["user"], me["device"])
     print("\n", internal_name)
-    dns_registration_process = run(
-        "Giving our device a name on the team network",
-        ["avahi-publish-address", internal_name, internal_ip],
-        bg=True,
-    )
+
+    print("Giving our device a name on the team network")
+    try:
+        run("Checking if avahi is available", ["which", "avahi-publish-address"])
+
+    except subprocess.CalledProcessError:
+        print("Couldn't setup local name, since avahi-publish-address isn't available.")
+        dns_registration_process = None
+
+    else:
+        dns_registration_process = run(
+            "Using avahi to setup local domain name",
+            ["avahi-publish-address", internal_name, internal_ip],
+            bg=True,
+        )
 
     print(
         f"\n► Setup complete ✓ \n\n"
@@ -407,8 +417,9 @@ if __name__ == "__main__":
             )
         )
 
-        print("Deregistering local domain name.\n")
-        dns_registration_process.terminate()
+        if dns_registration_process is not None:
+            print("Deregistering local domain name.\n")
+            dns_registration_process.terminate()
 
         print("Bye!")
         quit()
