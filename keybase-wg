@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 header = """
 
@@ -17,7 +17,6 @@ Quickly setup virtual private networks for Keybase teams with Wireguard.
 
 dev_docs = """
 TODO:
-  - Finish script by saving conf file and running "wg-quick".
   - Sanitize inputs by parsing them as the things they should
     be. Double check places where we stick stuff in the command line.
   - Double check that the team name given is valid.
@@ -40,7 +39,6 @@ TODO:
               }
           ]
     }}
-  - Test with multiple devices.
   - Use UDP ports properly.
   - Sort out hole-punching.
   - Use second public IP address API and compare results.
@@ -77,21 +75,37 @@ This is easy to achieve if Avahi is already setup and running. Then run:
 __doc__ = header + description + dev_docs
 
 
-import asyncio
 import argparse
+import asyncio
 import hashlib
-import json
-import os
-import subprocess
-import shlex
 import ipaddress
-import requests
+import json
 import pykeybasebot
+import requests
+import shlex
+import subprocess
 import time
 
 
 KEEP_ALIVE = 25
 LISTEN_PORT = "51820"
+
+
+WG_KEY_WHITELIST = None
+KID_WHITELIST = None
+TEAM_WHITELIST = None
+USER_WHITELIST = None
+INTERFACE_WHITELIST = (
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_=+.-"
+)
+IPV6_CIDR_WHITELIST = "0123456789abcdefABCDEF:/"
+
+
+def clean_string(chars, whitelist):
+    if whitelist is None:
+        return chars
+    else:
+        return "".join([char for char in chars if char in whitelist])
 
 
 def sha256(x):
@@ -136,9 +150,7 @@ def get_team_members(team_name):
         "params": {"options": {"team": team_name}},
     }
     command = json.dumps(command)
-    response = run_command(
-        "Fetching team info", ["keybase", "team", "api"], stdin=command,
-    )
+    response = run("Fetching team info", ["keybase", "team", "api"], stdin=command,)
     response = json.loads(response)
 
     members = (
@@ -156,7 +168,7 @@ def get_team_members(team_name):
 
 
 def get_device_info():
-    response = run_command("Getting your info", ["keybase", "status", "--json"],)
+    response = run("Getting your info", ["keybase", "status", "--json"],)
     response = json.loads(response)
     return {
         "user": response["Username"],
@@ -189,11 +201,9 @@ def generate_config(private_key, internal_ip, peers):
 
 
 def generate_keypair():
-    private_key = run_command("Generating private key", ["wg", "genkey"]).strip()
+    private_key = run("Generating private key", ["wg", "genkey"]).strip()
 
-    public_key = run_command(
-        "Deriving public key", ["wg", "pubkey"], stdin=private_key
-    ).strip()
+    public_key = run("Deriving public key", ["wg", "pubkey"], stdin=private_key).strip()
 
     return private_key, public_key
 
@@ -213,29 +223,52 @@ def fetch_network_state(bot):
         )
         for key in config_keys
     }
+    peers = {
+        key: {
+            "device_id": clean_string(peer["device_id"], KID_WHITELIST),
+            "public_key": clean_string(peer["public_key"], WG_KEY_WHITELIST),
+            "internal_ip": clean_string(peer["internal_ip"], IPV6_CIDR_WHITELIST),
+            "external_ip": clean_string(peer["external_ip"], IPV6_CIDR_WHITELIST),
+        }
+        for key, peer in peers.items()
+    }
 
     return peers
 
 
 def generate_interface_name(team):
+    team = clean_string(team, INTERFACE_WHITELIST)
     return f"kb-{team}"[0:15]
 
 
 def generate_hostname(team, user, device):
-    return f"{device}.{user}.{team}.local"
+    # nss-mdns disables .local domains with more than one "part"
+    # (i.e. a.local is allowed, but a.b.local is not).
+    # To avoid forcing people to change their configuration, this
+    # address scheme shouldn't use multiple address parts.
+    # Use dashes since they are disallowed in usernames.
+    return f"{device}-{user}-{team}.local"
 
 
-def run_command(desc, command, stdin=None):
+def run(desc, command, stdin=None, bg=False):
     command_preview = " ".join([shlex.quote(part) for part in command])
 
     print(f"\n{desc}:")
     print(f"  $ {command_preview}")
 
-    result = subprocess.run(
-        command, input=stdin, stdout=subprocess.PIPE, check=True, encoding="utf-8",
-    ).stdout
+    if bg == False:
+        result = subprocess.run(
+            command, input=stdin, stdout=subprocess.PIPE, check=True, encoding="utf-8",
+        ).stdout
+        return result
 
-    return result
+    elif bg == True:
+        process = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, encoding="utf-8",
+        )
+        if stdin:
+            process.stdin.write(stdin)
+        return process
 
 
 if __name__ == "__main__":
@@ -245,6 +278,9 @@ if __name__ == "__main__":
     parser.add_argument("--team", help="name of team to connect with", required=True)
 
     args = parser.parse_args()
+
+    # Clean the team name
+    team = clean_string(args.team, TEAM_WHITELIST)
 
     # The "bot" is our interface to keybase
     def event_handler(*args, **kwargs):
@@ -256,8 +292,7 @@ if __name__ == "__main__":
     me = get_device_info()
 
     private_key, public_key = generate_keypair()
-    print("")
-    print("private key \t", private_key)
+    print("\nprivate key \t", private_key)
     print("public key \t", public_key)
 
     # Figure out my public ip
@@ -305,22 +340,30 @@ if __name__ == "__main__":
     with open(interface_conf_path, "w") as f:
         f.writelines(config_str)
 
-    run_command(
-        "Join the network", ["wg-quick", "up", interface_conf_path],
+    run("Join the network", ["wg-quick", "up", interface_conf_path])
+
+    # Setup nice hostnames with avahi/mdns.
+    internal_name = generate_hostname(args.team, me["user"], me["device"])
+    print("\n", internal_name)
+    dns_registration_process = run(
+        "Giving our device a name on the team network",
+        ["avahi-publish-address", internal_name, internal_ip],
+        bg=True,
     )
 
-    # Use avahi to setup nice hostnames
-    # internal_name = generate_hostname(args.team, me["user"], me["device"])
-    # run_command(
-    #     "Giving our device a name on the team network",
-    #     ["avahi-publish-address", internal_name, internal_ip],
-    # )
+    print(
+        f"\n► Setup complete ✓ \n\n"
+        f"You are now connected to the {team} network. Team members \n"
+        f"can access your machine via {internal_ip}\n"
+        f"or {internal_name} (when mdns is enabled)."
+    )
+
+    listening_msg = "\n► Listening for changes in network config..."
+    print(listening_msg)
+    time.sleep(10)
 
     try:
         while True:
-            print("\n► Listening for changes in network config...")
-            time.sleep(10)
-
             new_peers = fetch_network_state(bot)
             new_peers = {
                 key: peer
@@ -338,34 +381,34 @@ if __name__ == "__main__":
                 print("Change detected: syncing configuration with team.")
                 peers = new_peers
 
-                run_command(
-                    "Taking interface down", ["wg-quick", "down", interface_conf_path],
-                )
+                run("Taking interface down", ["wg-quick", "down", interface_conf_path])
 
                 config_str = generate_config(private_key, internal_ip, peers)
                 with open(interface_conf_path, "w") as f:
                     f.writelines(config_str)
 
-                run_command(
+                run(
                     "Putting interface up", ["wg-quick", "up", interface_conf_path],
                 )
+
+                print(listening_msg)
+                time.sleep(10)
 
     except (KeyboardInterrupt, SystemExit):
         print("► Disconnecting from network.")
 
-        run_command(
-            "Taking interface down", ["wg-quick", "down", interface_conf_path],
-        )
-        run_command(
-            "Deleting wireguard config", ["rm", interface_conf_path],
-        )
+        run("Taking interface down", ["wg-quick", "down", interface_conf_path])
+        run("Deleting wireguard config", ["rm", interface_conf_path])
 
-        print("Deregistering from network.\n")
+        print("Removing our peering details.\n")
         asyncio.run(
             bot.kvstore.delete(
                 "keybase-wg", me["device_id"] + "-config", team=args.team,
             )
         )
+
+        print("Deregistering local domain name.\n")
+        dns_registration_process.terminate()
 
         print("Bye!")
         quit()
