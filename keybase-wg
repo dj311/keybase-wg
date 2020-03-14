@@ -168,7 +168,7 @@ def get_team_members(team_name):
 
 
 def get_device_info():
-    response = run("Getting your info", ["keybase", "status", "--json"],)
+    response = run("Getting device info", ["keybase", "status", "--json"],)
     response = json.loads(response)
     return {
         "user": response["Username"],
@@ -332,7 +332,7 @@ if __name__ == "__main__":
         key: peer for key, peer in peers.items() if peer["device_id"] != me["device_id"]
     }
 
-    print("\n► Configuring device.")
+    print("\n► Configuring your device.")
     interface = generate_interface_name(args.team)
     config_str = generate_config(private_key, internal_ip, peers)
 
@@ -345,7 +345,7 @@ if __name__ == "__main__":
     # Setup nice hostnames with avahi/mdns.
     internal_name = generate_hostname(args.team, me["user"], me["device"])
 
-    print("Giving our device a name on the team network")
+    print("Giving device a name on the team network")
     try:
         run("Checking if avahi is available", ["which", "avahi-publish-address"])
 
@@ -410,7 +410,7 @@ if __name__ == "__main__":
         run("Taking interface down", ["wg-quick", "down", interface_conf_path])
         run("Deleting wireguard config", ["rm", interface_conf_path])
 
-        print("Removing our peering details.\n")
+        print("Removing peering details.\n")
         asyncio.run(
             bot.kvstore.delete(
                 "keybase-wg", me["device_id"] + "-config", team=args.team,
