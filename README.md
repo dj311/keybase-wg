@@ -29,7 +29,7 @@ store for information on any peers, generates a Wireguard config, and starts up 
 
 It checks the shared store every 10 seconds for changes, then updates the Wireguard config if there are any.
 
-#### Is it usable yet?
+#### Is it usable yet? Not really.
 This is just a quick and dirty prototype at the moment. If you've stumbled upon this repo and want
 to use it, I'd recommend reading the source code first. This will ensure it does what you were hoping it
 does. It's less than 500 lines of Python so that shouldn't be too much of an issue.
