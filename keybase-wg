@@ -132,16 +132,16 @@ def generate_device_ip(team_name, user_name, device_name):
     return user_subnet + device_subnet
 
 
-def make_ipv6_cidr(ip):
-    len_bytes = len(ip)
+def make_ipv6_cidr(ip_bytes):
+    len_bytes = len(ip_bytes)
 
     if len_bytes < 16:  # subnet
-        padded_subnet = ip + bytes((16 - len_bytes) * [0])
+        padded_subnet = ip_bytes + bytes((16 - len_bytes) * [0])
         prefix_length = len_bytes * 8
         return str(ipaddress.IPv6Network((padded_subnet, prefix_length)))
 
     else:  # full_address
-        return str(ipaddress.IPv6Address(ip))
+        return str(ipaddress.IPv6Address(ip_bytes))
 
 
 def get_team_members(team_name):
@@ -202,9 +202,7 @@ def generate_config(private_key, internal_ip, peers):
 
 def generate_keypair():
     private_key = run("Generating private key", ["wg", "genkey"]).strip()
-
     public_key = run("Deriving public key", ["wg", "pubkey"], stdin=private_key).strip()
-
     return private_key, public_key
 
 
@@ -242,8 +240,12 @@ def generate_interface_name(team):
 
 
 def generate_hostname(team, user, device):
-    # nss-mdns disables .local domains with more than one "part"
-    # (i.e. a.local is allowed, but a.b.local is not).
+    # nss-mdns disables .local domains with more than one "part" by
+    # default (so `a.local` is allowed, but `a.b.local` is not).
+
+    # Addresses like device.user.team.local are nicest, but it's not
+    # worth forcing people to change their configuration.
+
     # To avoid forcing people to change their configuration, this
     # address scheme shouldn't use multiple address parts.
     # Use dashes since they are disallowed in usernames.
@@ -410,7 +412,7 @@ if __name__ == "__main__":
         run("Taking interface down", ["wg-quick", "down", interface_conf_path])
         run("Deleting wireguard config", ["rm", interface_conf_path])
 
-        print("Removing peering details.\n")
+        print("Removing peer details.\n")
         asyncio.run(
             bot.kvstore.delete(
                 "keybase-wg", me["device_id"] + "-config", team=args.team,
