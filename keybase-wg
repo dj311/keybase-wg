@@ -81,6 +81,7 @@ import hashlib
 import ipaddress
 import json
 import pykeybasebot
+import stun
 import requests
 import shlex
 import subprocess
@@ -88,7 +89,6 @@ import time
 
 
 KEEP_ALIVE = 25
-LISTEN_PORT = "51820"
 
 
 WG_KEY_WHITELIST = None
@@ -98,7 +98,8 @@ USER_WHITELIST = None
 INTERFACE_WHITELIST = (
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_=+.-"
 )
-IPV6_CIDR_WHITELIST = "0123456789abcdefABCDEF:/"
+CIDR_WHITELIST = "0123456789abcdefABCDEF.:/"
+PORT_WHITELIST = "0123456789"
 
 
 def clean_string(chars, whitelist):
@@ -178,12 +179,12 @@ def get_device_info():
     }
 
 
-def generate_config(private_key, internal_ip, peers):
+def generate_config(private_key, internal_ip, external_port, peers):
     config = (
         f"[Interface]\n"
         f"PrivateKey = {private_key}\n"
         f"Address = {internal_ip}\n"
-        f"ListenPort = {LISTEN_PORT}\n"
+        f"ListenPort = {external_port}\n"
         f"\n"
     )
 
@@ -192,7 +193,7 @@ def generate_config(private_key, internal_ip, peers):
             f"[Peer]\n"
             f"PublicKey = {peer['public_key']}\n"
             f"AllowedIPs = {peer['internal_ip']}\n"
-            f"Endpoint = {peer['external_ip']}:{LISTEN_PORT}\n"
+            f"Endpoint = {peer['external_ip']}:{peer['external_port']}\n"
             f"PersistentKeepalive = {KEEP_ALIVE}\n"
             f"\n"
         )
@@ -206,6 +207,21 @@ def generate_keypair():
     return private_key, public_key
 
 
+def parse_peer_state(json_string):
+    try:
+        return json.loads(
+            {
+                "device_id": clean_string(peer["device_id"], KID_WHITELIST),
+                "public_key": clean_string(peer["public_key"], WG_KEY_WHITELIST),
+                "internal_ip": clean_string(peer["internal_ip"], CIDR_WHITELIST),
+                "external_ip": clean_string(peer["external_ip"], CIDR_WHITELIST),
+                "external_port": clean_string(peer["external_port"], PORT_WHITELIST),
+            }
+        )
+    except:
+        return None
+
+
 def fetch_network_state(bot):
     keys = asyncio.run(bot.kvstore.list_entrykeys("keybase-wg", team=args.team))
 
@@ -216,20 +232,11 @@ def fetch_network_state(bot):
     config_keys = {key for key in keys if key.endswith("-config")}
 
     peers = {
-        key: json.loads(
-            asyncio.run(bot.kvstore.get("keybase-wg", key, args.team)).entry_value
-        )
+        key: asyncio.run(bot.kvstore.get("keybase-wg", key, args.team)).entry_value
         for key in config_keys
     }
-    peers = {
-        key: {
-            "device_id": clean_string(peer["device_id"], KID_WHITELIST),
-            "public_key": clean_string(peer["public_key"], WG_KEY_WHITELIST),
-            "internal_ip": clean_string(peer["internal_ip"], IPV6_CIDR_WHITELIST),
-            "external_ip": clean_string(peer["external_ip"], IPV6_CIDR_WHITELIST),
-        }
-        for key, peer in peers.items()
-    }
+    peers = {key: parse_peer_state(peer_state) for key, peer_state in peers.items()}
+    peers = {key: peer for key, peer in peers.items() if peer is not None}
 
     return peers
 
@@ -298,8 +305,11 @@ if __name__ == "__main__":
     print("public key \t", public_key)
 
     # Figure out my public ip
-    # TODO: I feel like there is a more "correct way" of doing this.
-    external_ip = requests.get("https://checkip.amazonaws.com").text.strip()
+    nat_type, external_ip, external_port = stun.get_ip_info()
+    external_ip = clean_string(external_ip, CIDR_WHITELIST)
+    external_port = clean_string(str(external_port), PORT_WHITELIST)
+
+    print("external port \t", external_port)
     print("external ip \t", external_ip)
 
     # Generate my internal ip
@@ -320,6 +330,7 @@ if __name__ == "__main__":
                     "public_key": public_key,
                     "internal_ip": internal_ip,
                     "external_ip": external_ip,
+                    "external_port": external_port,
                 }
             ),
             team=args.team,
@@ -336,7 +347,7 @@ if __name__ == "__main__":
 
     print("\n► Configuring your device.")
     interface = generate_interface_name(args.team)
-    config_str = generate_config(private_key, internal_ip, peers)
+    config_str = generate_config(private_key, internal_ip, external_port, peers)
 
     interface_conf_path = "./" + interface + ".conf"
     with open(interface_conf_path, "w") as f:
@@ -395,13 +406,13 @@ if __name__ == "__main__":
 
                 run("Taking interface down", ["wg-quick", "down", interface_conf_path])
 
-                config_str = generate_config(private_key, internal_ip, peers)
+                config_str = generate_config(
+                    private_key, internal_ip, external_port, peers
+                )
                 with open(interface_conf_path, "w") as f:
                     f.writelines(config_str)
 
-                run(
-                    "Putting interface up", ["wg-quick", "up", interface_conf_path],
-                )
+                run("Putting interface up", ["wg-quick", "up", interface_conf_path])
 
                 print(listening_msg)
                 time.sleep(10)
