@@ -209,15 +209,15 @@ def generate_keypair():
 
 def parse_peer_state(json_string):
     try:
-        return json.loads(
-            {
-                "device_id": clean_string(peer["device_id"], KID_WHITELIST),
-                "public_key": clean_string(peer["public_key"], WG_KEY_WHITELIST),
-                "internal_ip": clean_string(peer["internal_ip"], CIDR_WHITELIST),
-                "external_ip": clean_string(peer["external_ip"], CIDR_WHITELIST),
-                "external_port": clean_string(peer["external_port"], PORT_WHITELIST),
-            }
-        )
+        peer = json.loads(json_string)
+        peer = {
+            "device_id": clean_string(peer["device_id"], KID_WHITELIST),
+            "public_key": clean_string(peer["public_key"], WG_KEY_WHITELIST),
+            "internal_ip": clean_string(peer["internal_ip"], CIDR_WHITELIST),
+            "external_ip": clean_string(peer["external_ip"], CIDR_WHITELIST),
+            "external_port": clean_string(peer["external_port"], PORT_WHITELIST),
+        }
+        return peer
     except:
         return None
 
