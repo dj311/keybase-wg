@@ -401,7 +401,7 @@ if __name__ == "__main__":
             peer_removed = any([key not in new_peers for key in peers])
 
             if peer_added or peer_removed or any(peers_changed):
-                print("Change detected: syncing configuration with team.")
+                print("• Change detected: syncing configuration with team.")
                 peers = new_peers
 
                 run("Taking interface down", ["wg-quick", "down", interface_conf_path])
@@ -414,11 +414,10 @@ if __name__ == "__main__":
 
                 run("Putting interface up", ["wg-quick", "up", interface_conf_path])
 
-                print(listening_msg)
-                time.sleep(10)
-
             else:
-                print("No changes detected.")
+                print("• No changes detected.")
+
+            time.sleep(10)
 
     except (KeyboardInterrupt, SystemExit):
         print("► Disconnecting from network.")
