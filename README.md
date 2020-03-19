@@ -40,8 +40,10 @@ With the current functionality, it's missing some pretty important details:
      of the network. Not ideal.
   2. If a devices external IP changes during the session, *newly* connected peers won't be able to
      connect to it. The fix is to check the external IP during each polling cycle.
-  2. It crashes pretty regularly, and often fails to shutdown nicely. I think this is because of the way
+  3. It crashes pretty regularly, and often fails to shutdown nicely. I think this is because of the way
      `avahi` is called in the background.
+  4. It doesn't even attempt UDP hole punching. It hardcodes the UDP port as 5280 and thats it. This
+     has already broken it for me on some mobile networks, for example.
      
 #### How do I run it?
   1. Make sure Keybase and Wireguard are installed and working. The Keybase dameon should be running and logged in.
