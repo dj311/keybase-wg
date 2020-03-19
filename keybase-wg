@@ -17,15 +17,17 @@ Quickly setup virtual private networks for Keybase teams with Wireguard.
 
 dev_docs = """
 TODO:
-  - Sanitize inputs by parsing them as the things they should
+  [-] Sanitize inputs by parsing them as the things they should
     be. Double check places where we stick stuff in the command line.
-  - Double check that the team name given is valid.
-  - Where possible, double check that say peer with device_id=x is
+  [ ] Double check that the team name given is valid.
+  [ ] Where possible, double check that say peer with device_id=x is
     actually in our team. Which leads to....
-  - Figure out a way to invalid devices which have been revoked.
+  [ ] Figure out a way to invalid devices which have been revoked.
     - I think the way to do this is to check which key was used to
       sign each value in the keystore. Was it the current team key? Or
       was it the old one? If it was an old one, reject it.
+    - If this is too hard, I reckon you can fudge something on top with
+      revisions and shared secrets.
     - This might be an alternative method:
       $ echo '{"method": "getdeviceinfo", "params": {"options": {"username": "?"}}}' \
         | keybase chat api -p
@@ -39,9 +41,9 @@ TODO:
               }
           ]
     }}
-  - Use UDP ports properly.
-  - Sort out hole-punching.
-  - Use second public IP address API and compare results.
+  [x] Use UDP ports properly. Done.
+  [x] Sort out hole-punching. I think this is done via pystun3 now.
+  [x] Use second public IP address API and compare results. Fixed by using stun servers.
 
 
 Internal Network Structure:
@@ -61,15 +63,13 @@ In summary:
 This means the internal network layout is directly determined from the current team
 membership. Adding or removing new members doesn't have any affect on existing IPs.
 
-In the future, I want to make use of this to have nice hostnames like
-"<device>.<user>.<team>.keybase.local". With the design above, this can be done via a
-little stateless DNS server that runs on each users machine.
-
-This is easy to achieve if Avahi is already setup and running. Then run:
+The tool also sets up domains with the structure "<device>-<user>-<team>-keybase.local".
+This is achieved with Avahi via:
   $ avahi-publish-address \
-      <device_name>.<user_name>.<team_name>.local \
+      <device_name>-<user_name>-<team_name>.local \
       <generate_device_ip(team_name, user_name, device_name)>
 
+See generate_hostname() for why it uses dashes and not dots.
 """
 
 __doc__ = header + description + dev_docs

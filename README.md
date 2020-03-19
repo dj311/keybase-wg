@@ -27,7 +27,7 @@ At the beginning of each session, this tool generates a new Wireguard keypair an
 IP address. It then shares the public key and IP with peers over the shared store. Next, it checks the shared
 store for information on any peers, generates a Wireguard config, and starts up Wireguard.
 
-It checks the shared store every 10 seconds for changes, then updates the Wireguard config if there are any. 
+It checks the shared store every 10 seconds for changes, then updates the Wireguard config if there are any.
 
 #### Is it usable yet?
 This is just a quick and dirty prototype at the moment. If you've stumbled upon this repo and want
@@ -42,9 +42,7 @@ With the current functionality, it's missing some pretty important details:
      connect to it. The fix is to check the external IP during each polling cycle.
   3. It crashes pretty regularly, and often fails to shutdown nicely. I think this is because of the way
      `avahi` is called in the background.
-  4. It doesn't even attempt UDP hole punching. It hardcodes the UDP port as 5280 and thats it. This
-     has already broken it for me on some mobile networks, for example.
-     
+
 #### How do I run it?
   1. Make sure Keybase and Wireguard are installed and working. The Keybase dameon should be running and logged in.
   2. Clone and enter this repo: `git clone https://github.com/dj311/keybase-wg.git && cd keybase-wg`
@@ -52,5 +50,5 @@ With the current functionality, it's missing some pretty important details:
   4. Install the Python dependencies: `python3 -m pip install -r requirements.txt`.
   5. Run it: `./keybase-wg --team=<name>`.
   6. To stop the program and leave the network: `CTRL+C`.
-  
+
 I haven't tested, but tI can't think of any reason against running multiple of these at once for different teams.
