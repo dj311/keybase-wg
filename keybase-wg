@@ -417,6 +417,9 @@ if __name__ == "__main__":
                 print(listening_msg)
                 time.sleep(10)
 
+            else:
+                print("No changes detected.")
+
     except (KeyboardInterrupt, SystemExit):
         print("► Disconnecting from network.")
 
