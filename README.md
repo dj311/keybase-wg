@@ -42,6 +42,8 @@ With the current functionality, it's missing some pretty important details:
      connect to it. The fix is to check the external IP during each polling cycle.
   3. It crashes pretty regularly, and often fails to shutdown nicely. I think this is because of the way
      `avahi` is called in the background.
+     
+For more detail on the current status, checkout the ["`dev_docs`"](https://github.com/dj311/keybase-wg/blob/master/keybase-wg#L18).
 
 #### How do I run it?
   1. Make sure Keybase and Wireguard are installed and working. The Keybase dameon should be running and logged in.
