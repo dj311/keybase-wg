@@ -16,7 +16,7 @@ team members can be accessed via domains of the same format.
 #### Why would you want it?
   1. Share a live Jupyter session with your team.
   2. Debug local instances of web servers.
-  3. Play games over a LAN when you're really on a WLAN.
+  3. Play games over a LAN when you're really on a WAN.
   4. Etcetera
 
 #### How does it work?
