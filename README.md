@@ -1,5 +1,7 @@
 # keybase-wg
 
+Note: Please see the current [status](#is-it-usable-yet-not-really) of the project before using.
+
 This project gives Keybase teams quick and easy access to their own virtual private network. To use it, make sure
 the Keybase daemon is open and logged in, then run `keybase-wg --team=<name>`. `CTRL+C` will leave the
 network, and close down the program.
