@@ -77,13 +77,14 @@ __doc__ = header + description + dev_docs
 
 import argparse
 import asyncio
+import datetime
 import hashlib
 import ipaddress
 import json
 import pykeybasebot
-import stun
 import requests
 import shlex
+import stun
 import subprocess
 import time
 
@@ -263,7 +264,7 @@ def run(desc, command, stdin=None, bg=False):
     command_preview = " ".join([shlex.quote(part) for part in command])
 
     print(f"\n{desc}:")
-    print(f"  $ {command_preview}")
+    print(f"$ {command_preview}")
 
     if bg == False:
         result = subprocess.run(
@@ -278,6 +279,12 @@ def run(desc, command, stdin=None, bg=False):
         if stdin:
             process.stdin.write(stdin)
         return process
+
+
+def now_string():
+    now = datetime.datetime.now()
+    now_str = now.isoformat(timespec="seconds")
+    return now_str
 
 
 if __name__ == "__main__":
@@ -358,13 +365,15 @@ if __name__ == "__main__":
     # Setup nice hostnames with avahi/mdns.
     internal_name = generate_hostname(args.team, me["user"], me["device"])
 
-    print("Giving device a name on the team network")
+    print("\nGiving device a name on the team network")
     try:
         run("Checking if avahi is available", ["which", "avahi-publish-address"])
 
     except subprocess.CalledProcessError:
-        print(f"\nCouldn't setup local name {internal_name},\n")
-        print(f"since avahi-publish-address isn't available.\n")
+        print(
+            f"\nCouldn't setup local name {internal_name}, "
+            f"since avahi-publish-address isn't available.\n"
+        )
         dns_registration_process = None
 
     else:
@@ -373,11 +382,13 @@ if __name__ == "__main__":
             ["avahi-publish-address", internal_name, internal_ip],
             bg=True,
         )
+        time.sleep(1)
 
+    num_members = len(peers)
     print(
         f"\n► Setup complete ✓ \n\n"
-        f"You are now connected to the {team} network. Team members \n"
-        f"can access your machine via {internal_ip}\n"
+        f"You are now connected to the {team} network along with {num_members} others. "
+        f"Team members can access your machine via {internal_ip} "
         f"or {internal_name} (when mdns is enabled)."
     )
 
@@ -401,7 +412,9 @@ if __name__ == "__main__":
             peer_removed = any([key not in new_peers for key in peers])
 
             if peer_added or peer_removed or any(peers_changed):
-                print("• Change detected: syncing configuration with team.")
+                print(
+                    f"• [{now_string()}] Change detected: syncing configuration with team."
+                )
                 peers = new_peers
 
                 run("Taking interface down", ["wg-quick", "down", interface_conf_path])
@@ -413,9 +426,10 @@ if __name__ == "__main__":
                     f.writelines(config_str)
 
                 run("Putting interface up", ["wg-quick", "up", interface_conf_path])
+                print()
 
             else:
-                print("• No changes detected.")
+                print(f"• [{now_string()}] No changes detected.")
 
             time.sleep(10)
 
