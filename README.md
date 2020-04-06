@@ -4,8 +4,9 @@ Note: Please see the current [status](#is-it-usable-yet-not-really) of the proje
 
 This project gives Keybase teams quick and easy access to their own virtual private network. To use it, make sure
 the Keybase daemon is open and logged in, then run `keybase-wg --team=<name>`. `CTRL+C` will leave the
-network, and close down the program. Watch [this demo video](https://daniel.wilshirejones.com/res/keybase-wg-demo.mp4)
-to get a better idea of what it does.
+network, and close down the program. Here's a demo:
+
+[![keybase-wg demo](https://daniel.wilshirejones.com/res/keybase-wg-demo-opt.gif)](https://daniel.wilshirejones.com/res/keybase-wg-demo.mp4)
 
 It requires Keybase and Wireguard to be installed. If you've got avahi then you'll also get a nice
 internal naming system. I've only tested it on Ubuntu 19.10 so your mileage is bound to be pretty variable.
